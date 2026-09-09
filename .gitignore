@@ -1,0 +1,30 @@
+# Scanner runtime data — never commit these
+.security-scanner-*/
+baseline.json
+checksums-*.json
+config.json
+status.json
+quarantine.json
+scan.lock
+reports/
+quarantine/
+
+# AMWScan is a separate GPL-3.0 project — download it, do not vendor it
+scanner.php
+
+# Local test material
+wordpress/
+wp-*/
+*.tar.gz
+_to_delete/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Never commit a site being scanned
+wp-config.php
+*.sql
