@@ -22,7 +22,7 @@ does not link against AMWScan, include its source, or import its code.
 
 Two consequences:
 
-1. **Do not commit `scanner.php` to a fork of this repository.** `.gitignore`
+1. **Do not commit AMWScan (`scanner`) to a fork of this repository.** `.gitignore`
    excludes it. Shipping both together in one distribution weakens the argument
    that they are separate works and may pull this project's code under GPL-3.0.
 2. **If you intend to sell a closed-source product built on this**, get legal

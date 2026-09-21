@@ -35,7 +35,7 @@ how this project shipped a 3.6% false-positive rate while believing it was zero.
 
 ## Do not commit
 
-- `scanner.php` (AMWScan - separate GPL-3.0 project, see `LICENSING.md`)
+- `scanner` / `scanner.php` (AMWScan - separate GPL-3.0 project, see `LICENSING.md`)
 - Any real site's files, baseline, or `wp-config.php`
 - Scan output, reports, or quarantine contents
 

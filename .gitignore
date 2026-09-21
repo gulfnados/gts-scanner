@@ -10,6 +10,7 @@ reports/
 quarantine/
 
 # AMWScan is a separate GPL-3.0 project — download it, do not vendor it
+scanner
 scanner.php
 
 # Local test material

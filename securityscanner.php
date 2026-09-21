@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 const APP_NAME = 'Gulfnados Technology Systems (GTS) Malware Scanner';
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.2.0';
 const SHORT_NAME = 'GTS Malware Scanner';
 const TIMEZONE = 'Asia/Dubai';
 
@@ -17,7 +17,7 @@ const REPORT_RETENTION_DAYS = 30;
 const SESSION_TIMEOUT = 1800;
 
 // Default only. The dashboard toggle (saved in config.json) overrides this.
-const AUTO_QUARANTINE = true;
+const AUTO_QUARANTINE = false;   // off by default: a signature false positive must never move a live file unasked
 
 // Run scans as a detached background process so the browser request returns
 // immediately and can never hit the web server's execution-time limit.
@@ -60,7 +60,15 @@ function raiseMemoryLimit(string $target): void
 raiseMemoryLimit(DASHBOARD_MEMORY_LIMIT);
 
 $root = realpath(__DIR__) ?: __DIR__;
-$scanner = $root . DIRECTORY_SEPARATOR . 'scanner.php';
+// AMWScan ships as "scanner" (a phar) in current releases and as
+// "scanner.php" in older ones. Accept either, plus the Composer install path.
+$scanner = '';
+foreach (['scanner', 'scanner.php', 'amwscan', 'amwscan.phar',
+          'vendor/bin/amwscan', 'vendor/marcocesarato/amwscan/dist/scanner'] as $candidate) {
+    $try = $root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $candidate);
+    if (is_file($try)) { $scanner = $try; break; }
+}
+if ($scanner === '') $scanner = $root . DIRECTORY_SEPARATOR . 'scanner';
 $self = realpath(__FILE__) ?: __FILE__;
 $installationId = substr(hash('sha256', $root), 0, 12);
 
@@ -682,7 +690,7 @@ function tailProgress(string $file): array
 function startBackgroundScan(array $paths, string $dataDir, string $phpCli): void
 {
     if (scanIsRunning($paths['lock'])) throw new RuntimeException('Another scan is already running.');
-    if (!is_file($paths['scanner'])) throw new RuntimeException('scanner.php must be beside security-scanner.php.');
+    if (!is_file($paths['scanner'])) throw new RuntimeException('AMWScan is not installed. Use "Install AMWScan" on the dashboard first.');
     if (!execAllowed()) throw new RuntimeException('PHP exec() is disabled, so background scans are not possible. Turn off background mode in Scan Configuration.');
     if (!phpWorks($phpCli)) {
         throw new RuntimeException('No usable PHP command-line binary was found (tried: ' . (implode(', ', phpCandidates()) ?: 'none') . '). Turn off background mode in Scan Configuration, or ask your host for the PHP CLI path and set PHP_CLI_PATH at the top of this file.');
@@ -742,6 +750,7 @@ function parseLogStream(string $file, array $exclusions, string $root): array
 
     $filesScanned = 0;
     $progressReachedEnd = false;
+    $scanFinished = false;
     $previous = [];   // the 2 lines before the current one
     $open = [];       // finding blocks still collecting trailing context
     $blocks = [];     // completed blocks
@@ -749,7 +758,7 @@ function parseLogStream(string $file, array $exclusions, string $root): array
     $truncated = false;
 
     $handleLine = static function (string $line) use (
-        &$filesScanned, &$progressReachedEnd, &$previous, &$open, &$blocks, &$seenFindings, &$truncated
+        &$filesScanned, &$progressReachedEnd, &$scanFinished, &$previous, &$open, &$blocks, &$seenFindings, &$truncated
     ): void {
         $line = stripAnsi($line);
 
@@ -762,6 +771,15 @@ function parseLogStream(string $file, array $exclusions, string $root): array
             unset($matches);
         }
         if (!$progressReachedEnd && str_contains($line, '100%')) $progressReachedEnd = true;
+        // AMWScan's own completion markers. The progress bar redraws in place
+        // and on small or fast scans its final 100% frame is often never
+        // written to the log, so the bar alone cannot be trusted: relying on
+        // it reported clean scans as "did not run".
+        if (!$scanFinished && preg_match('/^\s*(Scan finished!|SUMMARY\s*$)/', $line) === 1) $scanFinished = true;
+        if (preg_match('/^\s*Files scanned:\s*(\d+)/', $line, $fs) === 1) {
+            $scanFinished = true;
+            if ((int)$fs[1] > $filesScanned) $filesScanned = (int)$fs[1];
+        }
 
         foreach ($open as $key => $block) {
             $open[$key]['lines'][] = $line;
@@ -841,7 +859,7 @@ function parseLogStream(string $file, array $exclusions, string $root): array
     if (count($active) > MAX_FINDINGS_STORED) { $active = array_slice($active, 0, MAX_FINDINGS_STORED); $truncated = true; }
     if (count($excluded) > MAX_FINDINGS_STORED) $excluded = array_slice($excluded, 0, MAX_FINDINGS_STORED);
 
-    $completed = $progressReachedEnd || ($filesScanned > 0 && count($unique) > 0);
+    $completed = $scanFinished || $progressReachedEnd || ($filesScanned > 0 && count($unique) > 0);
     return [
         'files_scanned' => $filesScanned,
         'completed' => $completed,
@@ -1039,13 +1057,13 @@ function coreChecksums(string $version, string $cacheDir, string $locale = 'en_U
 }
 
 /** Fetch a URL with curl, falling back to streams. Null on any failure. */
-function fetchUrl(string $url): ?string
+function fetchUrl(string $url, int $timeout = 20): ?string
 {
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 20,
+            CURLOPT_TIMEOUT        => $timeout,
             CURLOPT_CONNECTTIMEOUT => 8,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS      => 3,
@@ -1058,7 +1076,7 @@ function fetchUrl(string $url): ?string
         return null;
     }
     if (!ini_get('allow_url_fopen')) return null;
-    $ctx  = stream_context_create(['http' => ['timeout' => 20, 'user_agent' => 'GTS-Malware-Scanner']]);
+    $ctx  = stream_context_create(['http' => ['timeout' => $timeout, 'user_agent' => 'GTS-Malware-Scanner']]);
     $body = @file_get_contents($url, false, $ctx);
     return is_string($body) && $body !== '' ? $body : null;
 }
@@ -1216,6 +1234,76 @@ function structuralScan(string $root, bool $isWordPress = false): array
 }
 
 
+
+/* ---- One-click AMWScan install --------------------------------------
+ * AMWScan is GPL-3.0 and is never shipped with this file. Instead, the
+ * operator's own server downloads it straight from the upstream project.
+ * This project never distributes it, and the user always gets the current
+ * release rather than a frozen copy.
+ * ------------------------------------------------------------------- */
+const AMWSCAN_URL = 'https://raw.githubusercontent.com/marcocesarato/PHP-Antimalware-Scanner/master/dist/scanner';
+
+function installAmwscan(string $dir, string $phpBinary): array
+{
+    $dir = rtrim($dir, '/\\');
+    if (!is_dir($dir) || !is_writable($dir)) {
+        return ['ok' => false, 'error' => 'The web server cannot write to ' . $dir
+            . '. Download AMWScan manually from ' . AMWSCAN_URL . ' and save it here as "scanner".'];
+    }
+
+    $body = fetchUrl(AMWSCAN_URL, 180);
+    if ($body === null) {
+        return ['ok' => false, 'error' => 'Could not download AMWScan - this server may not have outbound '
+            . 'internet access. Download it manually from ' . AMWSCAN_URL . ' and save it here as "scanner".'];
+    }
+
+    // Refuse anything that is not recognisably the AMWScan phar: an error
+    // page, a captive-portal response, or a tampered download must never be
+    // written into a web root.
+    $len = strlen($body);
+    if ($len < 200000 || $len > 52428800
+        || preg_match('/^(#![^\n]*\n)?<\?php/', $body) !== 1
+        || strpos($body, '__HALT_COMPILER') === false
+        || stripos($body, 'marcocesarato') === false) {
+        return ['ok' => false, 'error' => 'The download did not look like AMWScan, so it was discarded. '
+            . 'Nothing was written. Try again, or download it manually from ' . AMWSCAN_URL . '.'];
+    }
+
+    $tmp = $dir . DIRECTORY_SEPARATOR . '.scanner-' . bin2hex(random_bytes(6)) . '.tmp';
+    if (@file_put_contents($tmp, $body) !== $len) {
+        @unlink($tmp);
+        return ['ok' => false, 'error' => 'Could not write the file to ' . $dir . '.'];
+    }
+    @chmod($tmp, 0644);
+
+    // Prove it actually runs before putting it in place.
+    $verified = false;
+    if ($phpBinary !== '' && execAllowed()) {
+        $out = []; $code = 1;
+        @exec(escapeshellarg($phpBinary) . ' ' . escapeshellarg($tmp) . ' --help 2>&1', $out, $code);
+        $text = implode("\n", $out);
+        if ($code !== 0 || strpos($text, '--auto-quarantine') === false) {
+            @unlink($tmp);
+            return ['ok' => false, 'error' => 'AMWScan downloaded but would not run on this server, so it was '
+                . 'removed. Check the PHP CLI binary in Server Diagnostics.'];
+        }
+        $verified = true;
+    }
+
+    $final = $dir . DIRECTORY_SEPARATOR . 'scanner';
+    if (!@rename($tmp, $final)) {
+        @unlink($tmp);
+        return ['ok' => false, 'error' => 'Could not move AMWScan into place at ' . $final . '.'];
+    }
+    return [
+        'ok'       => true,
+        'path'     => $final,
+        'bytes'    => $len,
+        'sha256'   => hash('sha256', $body),
+        'verified' => $verified,
+    ];
+}
+
 /** Shape an integrity result like the rest of the finding pipeline. */
 function integrityFinding(string $wpRoot, string $rel, string $threat, string $severity, string $source): array
 {
@@ -1271,7 +1359,6 @@ function mergeAllFindings(array $amwscan, array $integrity): array
 
 function runScan(array $paths): array
 {
-    if (!is_file($paths['scanner'])) throw new RuntimeException('scanner.php must be beside security-scanner.php.');
     if (!is_dir($paths['root'])) throw new RuntimeException('Scan path is not a directory: ' . $paths['root']);
     if (!execAllowed()) throw new RuntimeException('PHP exec() is disabled.');
 
@@ -1386,7 +1473,13 @@ function runScan(array $paths): array
         $exitCode = 0;
         $cliError = '';
 
-        if ($phpBinary === '') {
+        if (!is_file($paths['scanner'])) {
+            $cliError = 'AMWScan is not installed, so the malware signature scan did not run. '
+                . 'Use "Install AMWScan" on the dashboard - it downloads the current release from the upstream project.';
+            if (!is_dir($verifyRoot)) {
+                throw new RuntimeException($cliError . ' The scan path is not readable either, so nothing has been checked.');
+            }
+        } elseif ($phpBinary === '') {
             $tried = phpCandidates();
             $cliError = 'No working PHP command-line binary was found, so the AMWScan malware scan did not run. '
                 . ($tried ? 'Tried: ' . implode(', ', array_slice($tried, 0, 6)) . '. ' : 'No candidate paths existed on this server. ')
@@ -1625,6 +1718,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $message='Settings saved. Scanning '.$scanRoot.'. Auto-quarantine '.($wantAuto?'ON':'OFF').', background scans '.($wantBackground?'ON':'OFF').'.';
                     $messageClass='success';
                 } catch (Throwable $error) { $message='Unable to save configuration: '.$error->getMessage(); $messageClass='error'; }
+            }
+        }
+
+        if ($action==='install_amwscan') {
+            $cliForInstall = resolveWorkingPhp($phpCli, $configFile);
+            $res = installAmwscan($root, $cliForInstall);
+            if (!empty($res['ok'])) {
+                $scanner = $res['path']; $paths['scanner'] = $scanner;
+                $message = 'AMWScan installed (' . number_format($res['bytes'] / 1048576, 1) . ' MB, sha256 '
+                    . substr($res['sha256'], 0, 12) . '...). '
+                    . ($res['verified'] ? 'Verified: it runs on this server.' : 'Could not test-run it because PHP CLI is unavailable.')
+                    . ' Downloaded from the upstream project; GPL-3.0, by Marco Cesarato.';
+                $messageClass = 'success';
+            } else {
+                $message = (string)$res['error'];
+                $messageClass = 'error';
             }
         }
 
@@ -2090,6 +2199,22 @@ $lastRun = (string)($status['finished_at'] ?? '');
   <form method="post" id="scanForm"><input type="hidden" name="action" value="scan"><input type="hidden" name="csrf" value="<?=h($csrf)?>"><button class="btn" type="submit" <?=$running?'disabled':''?>><?=$running?'Scan running...':'Run Scan Now'?></button></form>
 </section>
 
+<?php if(!is_file($scanner)):?>
+  <div class="msg m-warning" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+    <div style="flex:1;min-width:240px">
+      <strong>AMWScan is not installed.</strong>
+      The integrity checks work without it, but the malware signature scan will not run.
+      One click downloads the current release directly from the
+      <a href="https://github.com/marcocesarato/PHP-Antimalware-Scanner" target="_blank" rel="noopener noreferrer">upstream project</a>
+      (GPL-3.0, by Marco Cesarato) onto this server.
+    </div>
+    <form method="post" style="margin:0">
+      <input type="hidden" name="action" value="install_amwscan">
+      <input type="hidden" name="csrf" value="<?=h($csrf)?>">
+      <button class="btn btn-sm" type="submit">Install AMWScan</button>
+    </form>
+  </div>
+<?php endif;?>
 <?php if($scanPathWarning):?><div class="msg m-error"><?=h($scanPathWarning)?></div><?php endif;?>
 <?php if($completion==='cancelled'):?>
   <div class="msg m-warning">
@@ -2103,7 +2228,9 @@ $lastRun = (string)($status['finished_at'] ?? '');
     <strong>Not everything ran.</strong> This scan did not include:
     <?=h(implode('; ', (array)$status['not_run']))?>.
     Treat the result as covering only what is listed under Integrity below.
-    <?php if(!empty($status['cli_error'])):?><br><small><?=h((string)$status['cli_error'])?></small><?php endif;?>
+    <?php if(!empty($status['cli_error']) && is_file($scanner) && stripos((string)$status['cli_error'], 'not installed') !== false):?>
+      <br><strong>AMWScan has been installed since this scan. Run a new scan to include it.</strong>
+    <?php elseif(!empty($status['cli_error'])):?><br><small><?=h((string)$status['cli_error'])?></small><?php endif;?>
   </div>
 <?php endif;?>
 <?php if($completion==='failed'):?>

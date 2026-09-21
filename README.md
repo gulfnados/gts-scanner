@@ -1,99 +1,105 @@
 # GTS Scanner
 
-A single-file web dashboard and **integrity layer** for PHP malware scanning.
-Drop one file on a server, open it in a browser, and get file-integrity
-verification plus a UI around [AMWScan](https://github.com/marcocesarato/PHP-Antimalware-Scanner).
+A browser dashboard for [AMWScan](https://github.com/marcocesarato/PHP-Antimalware-Scanner),
+plus baseline drift detection for code that no upstream can vouch for.
 
-Works on WordPress and on any other PHP project.
+Single PHP file. No dependencies.
 
 ![Dashboard](docs/dashboard.png)
 
-## What this is, and what it is not
+## Read this before you install
 
-**This is not another malware scanner.** Signature detection is AMWScan's job and
-it already does it well. This project adds the two things AMWScan does not:
+**AMWScan already covers most of what you probably want.** It has an official
+[WordPress plugin](https://wordpress.org/plugins/amwscan) with a dashboard,
+background scans, quarantine and reports. It also does integrity verification
+against trusted release checksums for WordPress, WooCommerce, Drupal, Joomla,
+Magento, PrestaShop, TYPO3, Laravel, Symfony, CodeIgniter, Yii and CakePHP.
 
-- **Integrity verification** - comparing files against known-good hashes rather
-  than guessing whether code looks dangerous
-- **A web dashboard** - so a client who will never open a terminal can run a
-  scan, see severity-ranked findings, quarantine a file, and restore it
+**If you are on WordPress, install their plugin instead.** It is more mature and
+better maintained than this.
 
-If you want a CLI scanner, use AMWScan directly. If you want to hand a
-non-technical site owner something they can actually use, this is that.
+This project exists for a narrower gap.
 
-## How detection works
+## The gap it fills
 
-Three layers. Two of them involve no guessing at all.
+**1. A browser UI for PHP projects that are not WordPress.**
+AMWScan's dashboard is a WordPress plugin. Everywhere else it is CLI only. On
+shared hosting with cPanel and no SSH, that is a problem. This gives you a login,
+a scan button, severity-ranked findings, quarantine and restore — in a browser.
 
-### 1. Core integrity — deterministic, WordPress only
+**2. Baseline drift for code with no upstream.**
+AMWScan compares your files against *official release checksums*. That works
+brilliantly for WordPress core and Composer packages, and not at all for a
+bespoke theme, a client's custom plugin, or an application written in-house —
+because nobody publishes hashes for those.
 
-Reads the installed version, fetches official checksums from `api.wordpress.org`,
-and compares every core file. Reports **modified core file**, **unknown file
-inside a core directory** (where dropped shells live), and **missing core file**.
+This records a SHA-256 of **every file in your tree** at a moment you choose,
+then reports what was added, changed or removed since. It cannot tell you a file
+is *correct*, only that it is *different from when you last looked*. For custom
+code, that is usually the question worth asking.
 
-This is a hash comparison. It does not produce false positives.
+It is also what catches a backdoor that keeps rewriting itself — the file
+reappears as *added* on the next scan.
 
-### 2. Baseline drift — deterministic, any PHP project
-
-Records a SHA-256 of every source file. Later scans report what was **added**,
-**changed** or **removed** since.
-
-This is the layer that covers plugins, themes, `vendor/` directories and your own
-application code — everything no upstream authority publishes hashes for. It is
-also what catches a backdoor that keeps rewriting itself: the file reappears as
-*added* on the next scan.
-
-Capture the baseline while the site is clean. A baseline taken from a compromised
-site makes the compromise look normal.
-
-### 3. AMWScan — signatures
-
-Pattern-based malware detection, run as a separate CLI process. Requires PHP CLI.
-Not bundled — see [LICENSING.md](LICENSING.md).
-
-Structural rules run alongside: a PHP file inside an upload directory, PHP code
-inside a file with an image extension, and WordPress must-use plugins.
-
-## It will never claim more than it checked
-
-Every scan reports what **did not** run. If PHP CLI is missing, the integrity
-layers still run and the dashboard says the malware scan did not. If nothing ran,
-the scan fails loudly rather than reporting "clean".
-
-A security tool that says clean about something it never examined is worse than
-no tool at all.
+Capture the baseline while the site is clean. A baseline taken from a
+compromised site makes the compromise look normal.
 
 ## Install
 
-```bash
-# 1. Get AMWScan (separate GPL-3.0 project — do not commit it to a fork)
-wget https://github.com/marcocesarato/PHP-Antimalware-Scanner/releases/latest/download/scanner.php
+1. Copy `securityscanner.php` to your web root
+2. Open `https://your-site/securityscanner.php` and set a password (12 characters minimum)
+3. Click **Install AMWScan** — your server downloads the current release straight
+   from the [upstream project](https://github.com/marcocesarato/PHP-Antimalware-Scanner).
+   The download is checked before it is used and test-run before it is put in place.
+4. Point the scan path at your project, **capture a baseline**, and scan
 
-# 2. Put both files in your web root
-cp scanner.php securityscanner.php /var/www/html/
-```
+That's it. No command line.
 
-Then open `https://your-site/securityscanner.php`, set a password (12 characters
-minimum), point the scan path at your project root, **capture a baseline**, and
-scan.
+AMWScan is never shipped in this repository — it is GPL-3.0, and downloading it
+from upstream keeps it that way while giving you the current release rather than
+a frozen copy. If your server has no outbound internet access, the dashboard tells
+you where to download it by hand.
 
-Delete or move `securityscanner.php` when you are finished, or restrict access to
-it. It is an authenticated admin tool; do not leave it on a public server longer
-than you need it.
+**Auto-quarantine is off by default.** AMWScan's signatures do produce false
+positives — in testing it flagged a one-line `<?php echo "hello";` file — and an
+automatic move can take a working site down. Review findings, then quarantine.
+Turn auto-quarantine on in Scan Configuration once you trust the results on that
+host.
+
+Remove the file or restrict access when you are done. It is an authenticated
+admin tool; do not leave it on a public server longer than you need it.
 
 ## Requirements
 
 | | |
 |---|---|
 | PHP | 7.4+ with `exec()` enabled |
-| PHP CLI | Required for the AMWScan layer only. Auto-detected across cPanel, CloudLinux, LiteSpeed, Plesk, XAMPP, WAMP and Laragon on Linux and Windows |
-| Network | Outbound HTTPS to `api.wordpress.org` for core checksums. Everything else works offline |
+| PHP CLI | Needed for the AMWScan layer. Auto-detected across cPanel, CloudLinux, LiteSpeed, Plesk, XAMPP, WAMP, Laragon — Linux and Windows |
+| Network | Only for WordPress core checksums. Baseline drift works fully offline |
 | Dependencies | None |
 
-If a scan will not start, open the **Server Diagnostics** panel — it lists the
-PHP CLI binary in use and every path that was tried.
+If a scan will not start, open **Server Diagnostics** — it lists the PHP CLI
+binary in use and every path tried.
 
-## Measured results
+## It will never claim more than it checked
+
+Every scan reports what did **not** run. If PHP CLI is missing, the baseline and
+structural layers still run and the dashboard says the malware scan did not. If
+nothing ran, the scan fails loudly rather than reporting "clean".
+
+## What it does
+
+| Layer | Applies to | Deterministic |
+|---|---|---|
+| Baseline drift | Any PHP project | Yes |
+| Structural rules | Any PHP project | Yes |
+| WordPress core checksums | WordPress | Yes |
+| AMWScan signatures | Any PHP project | No — pattern matching |
+
+Structural rules: a PHP file inside an upload directory, PHP code inside a file
+with an image extension, and WordPress must-use plugins.
+
+## Measured
 
 Against a real WordPress 7.0.3 install (3,945 files):
 
@@ -103,31 +109,29 @@ Against a real WordPress 7.0.3 install (3,945 files):
 | Drift re-run, nothing changed | **0 false drift** |
 | Structural rules, clean install | **0 findings** |
 | Core verification, clean install | **3,496 files verified** |
-| Simulated infection, 7 artefacts planted | **all 7 detected** |
+| Simulated infection, 7 artefacts | **all 7 detected** |
+
+End-to-end integration verified against **AMWScan 0.21.2**.
 
 ## Known limitations
 
-Stated plainly, because a security tool that oversells itself is dangerous:
-
 - **Not tested against a large third-party plugin corpus.** Validated against
-  stock WordPress and a generic PHP project. Integrity checking is unaffected by
-  this — it is hash comparison — but it is why there is no bundled signature
-  engine of our own.
-- **The `api.wordpress.org` fetch is unproven against the live endpoint.** The
-  comparison logic was validated against a checksum map in the exact shape the
-  API returns. Check the Integrity panel on your first install.
+  stock WordPress and a generic PHP project.
+- **Baseline drift reports change, not badness.** A legitimate plugin update
+  shows as dozens of modified files. Re-capture after updates.
 - **A plugin that arrives already trojanised**, on a site that never had a clean
   baseline, is caught only if AMWScan's signatures catch it.
-- **Stop cannot interrupt a foreground scan** mid-file; it takes effect when the
-  current step finishes.
+- **Stop cannot interrupt a foreground scan** mid-file.
+- **The `api.wordpress.org` fetch is unproven against the live endpoint** — the
+  comparison logic was validated against a checksum map in the API's exact shape.
 
 ## Credits
 
-Malware signature detection by [AMWScan](https://github.com/marcocesarato/PHP-Antimalware-Scanner)
-(Marco Cesarato), GPL-3.0. This project is a companion to it, not a replacement.
+Malware detection is [AMWScan](https://github.com/marcocesarato/PHP-Antimalware-Scanner)
+by Marco Cesarato, GPL-3.0. This is a companion to it, not a replacement, and it
+is the more capable tool. Use it directly wherever you can.
 
 ## Licence
 
 MIT — see [LICENSE](LICENSE). Read [LICENSING.md](LICENSING.md) before bundling
-or selling anything built on this; AMWScan is GPL-3.0 and is deliberately not
-included here.
+or selling; AMWScan is GPL-3.0 and is deliberately not included here.

@@ -1,5 +1,43 @@
 # Changelog
 
+## 3.2.0
+
+Plug and play.
+
+- **One-click AMWScan install.** When AMWScan is missing, the dashboard offers an
+  **Install AMWScan** button. The server downloads the current release from the
+  upstream project, rejects anything that is not recognisably the AMWScan phar,
+  test-runs it, and only then moves it into place. AMWScan is still never
+  distributed by this project.
+- **A missing AMWScan no longer blocks the scan.** Baseline drift and the
+  structural rules run anyway, and the dashboard says the signature scan did not.
+- **Fixed: clean AMWScan scans were reported as "did not run".** Completion was
+  detected only from a `100%` progress frame, which AMWScan often never writes on
+  small or fast scans. It now uses AMWScan's own `Scan finished!` and summary
+  lines. On a healthy site this bug would have hidden every clean result.
+- **Auto-quarantine now defaults to off.** In testing, AMWScan flagged a one-line
+  `<?php echo "hello";` file as malware and moved it automatically. A signature
+  false positive must never move a live file without a human deciding.
+
+
+## 3.1.1
+
+Corrected the project's positioning after re-reading AMWScan's current
+documentation, and fixed the AMWScan integration for current releases.
+
+- **AMWScan has an official WordPress plugin and its own integrity verification.**
+  Earlier versions of this README claimed otherwise. Both claims were wrong. The
+  README now states plainly that WordPress users should install AMWScan's plugin
+  instead, and narrows this project's claim to the two things that are actually
+  distinct: a browser UI for non-WordPress PHP, and baseline drift over code with
+  no upstream checksums.
+- **AMWScan now ships as `scanner`, a phar, not `scanner.php`.** The lookup
+  accepts `scanner`, `scanner.php`, `amwscan`, `amwscan.phar` and the Composer
+  paths. Install instructions corrected to `dist/scanner`.
+- Verified end-to-end against real AMWScan 0.21.2 for the first time — all
+  planted backdoors detected, log parsing and finding merge both correct.
+
+
 ## 3.1.0
 
 Integrity layers no longer require WordPress.
