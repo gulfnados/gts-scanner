@@ -5,8 +5,6 @@ plus baseline drift detection for code that no upstream can vouch for.
 
 Single PHP file. No dependencies.
 
-![Dashboard](docs/dashboard.png)
-
 ## Read this before you install
 
 **AMWScan already covers most of what you probably want.** It has an official
